@@ -94,7 +94,8 @@ function playSource(pad, offset) {
   const gainNode = audioCtx.createGain();
   source.buffer = pad.buffer;
   source.loop = pad.loop;
-  source.playbackRate.value = pad.speed;
+  const playbackRate = pad.speed * state.globalPitch;
+  source.playbackRate.value = playbackRate;
   gainNode.gain.value = pad.volume;
   if (pad.fadeTime > 0) {
     gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
@@ -104,13 +105,14 @@ function playSource(pad, offset) {
   gainNode.connect(masterGain);
   source.start(0, offset);
   const sourceId = 'src_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
-  return { sourceId, source, gainNode, startTime: audioCtx.currentTime, duration: pad.buffer.duration / pad.speed, offset };
+  return { sourceId, source, gainNode, startTime: audioCtx.currentTime, duration: pad.buffer.duration / playbackRate, offset };
 }
 
 function getCurrentTime(sources, speed, loop, duration) {
   if (!audioCtx || sources.length === 0) return 0;
   const last = sources[sources.length - 1];
-  let elapsed = (audioCtx.currentTime - last.startTime) * speed + last.offset;
+  const playbackRate = speed * state.globalPitch;
+  let elapsed = (audioCtx.currentTime - last.startTime) * playbackRate + last.offset;
   if (loop && duration > 0) elapsed = elapsed % duration;
   return Math.min(elapsed, duration);
 }
@@ -135,6 +137,7 @@ async function decodeFile(file) {
 // ============ STATE ============
 let state = {
   masterVolume: 1,
+  globalPitch: 1,
   grid: { cols: 6, rows: 4 },
   tabs: [{ id: genId(), name: 'Bank 1', pads: [] }],
   activeTabId: null,
@@ -212,10 +215,64 @@ function stopSinglePad(padId) {
   render();
 }
 
+function clearAllPads() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  if (!confirm('¿Limpiar todos los soundpads del tab actual?')) return;
+  
+  // Stop all audio first
+  tab.pads.forEach(pad => {
+    if (pad.activeSources.length > 0) {
+      stopSources(pad.activeSources, 0);
+      pad.activeSources = [];
+    }
+    pad.isPlaying = false;
+    pad.currentSourceId = null;
+  });
+  
+  // Clear all pads
+  tab.pads.forEach(pad => {
+    pad.buffer = null;
+    pad.fileName = '';
+    pad.duration = 0;
+    pad.waveform = [];
+    pad.currentTime = 0;
+  });
+  
+  render();
+}
+
+function setGlobalPitch(val) {
+  state.globalPitch = parseFloat(val);
+  // Update all currently playing sources
+  state.tabs.forEach(tab => {
+    tab.pads.forEach(pad => {
+      pad.activeSources.forEach(src => {
+        src.source.playbackRate.value = pad.speed * state.globalPitch;
+      });
+    });
+  });
+  render();
+}
+
+function setPadCount(val) {
+  const total = parseInt(val);
+  if (total < 1 || total > 144) return;
+  
+  // Calculate best grid dimensions
+  const cols = Math.ceil(Math.sqrt(total));
+  const rows = Math.ceil(total / cols);
+  
+  state.grid.cols = cols;
+  state.grid.rows = rows;
+  render();
+}
+
 // ============ PERSISTENCE ============
 function saveState() {
   const data = {
     grid: state.grid,
+    globalPitch: state.globalPitch,
     tabs: state.tabs.map(t => ({ id: t.id, name: t.name, pads: t.pads.map(p => ({
       id: p.id, fileName: p.fileName, duration: p.duration, volume: p.volume, loop: p.loop,
       color: p.color, fadeTime: p.fadeTime, speed: p.speed, hotcues: p.hotcues, waveform: p.waveform
@@ -232,6 +289,7 @@ function loadState() {
     if (!saved) return;
     const data = JSON.parse(saved);
     if (data.grid) state.grid = data.grid;
+    if (data.globalPitch !== undefined) state.globalPitch = data.globalPitch;
     if (data.tabs) {
       state.tabs = data.tabs.map(t => ({
         ...t,
@@ -297,6 +355,7 @@ function render() {
   html += `<div class="flex items-center gap-2">`;
   html += `<button onclick="exportConfig()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Exportar">💾</button>`;
   html += `<label class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm cursor-pointer" title="Importar">📂<input type="file" accept=".json" class="hidden" onchange="importConfig(event)"></label>`;
+  html += `<button onclick="clearAllPads()" class="px-2.5 py-1.5 rounded-lg border border-orange-500/50 text-orange-400 hover:bg-orange-500/20 text-sm" title="Limpiar todos los pads del tab actual">🧹</button>`;
   html += `<button onclick="toggleRecording()" class="px-2.5 py-1.5 rounded-lg border text-sm ${state.isRecording ? 'bg-red-500/20 border-red-500 text-red-400' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-700'}" title="Grabar (Ctrl+R)">${state.isRecording ? '⏺' : '🔴'}</button>`;
   if (state.recordedSequence.length > 0 && !state.isRecording) {
     html += `<button onclick="playSequence()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Reproducir secuencia">▶️</button>`;
@@ -306,9 +365,20 @@ function render() {
 
   // CONTROLS BAR
   html += `<div class="bg-zinc-900/70 border-b border-zinc-800 px-4 py-2 flex items-center gap-4 flex-wrap shrink-0">`;
+  
+  // Pad count slider
+  const currentPadCount = state.grid.cols * state.grid.rows;
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Pads:</label><input type="range" min="1" max="64" value="${currentPadCount}" oninput="setPadCount(this.value)" class="w-32"><span class="text-xs text-zinc-300 font-mono w-8">${currentPadCount}</span></div>`;
+  
+  // Cols/Rows inputs (optional advanced control)
   html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Cols:</label><input type="number" min="1" max="12" value="${state.grid.cols}" onchange="setCols(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
   html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Filas:</label><input type="number" min="1" max="12" value="${state.grid.rows}" onchange="setRows(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
+  
   html += `<div class="flex-1"></div>`;
+  
+  // Global Pitch control
+  html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🎵 Pitch:</span><input type="range" min="0.5" max="2" step="0.01" value="${state.globalPitch}" oninput="setGlobalPitch(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-10">${state.globalPitch.toFixed(2)}x</span></div>`;
+  
   html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🔊 Master:</span><input type="range" min="0" max="1" step="0.01" value="${state.masterVolume}" oninput="setMasterVol(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-8">${Math.round(state.masterVolume*100)}%</span></div>`;
   if (state.isRecording) {
     html += `<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30"><div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span class="text-xs text-red-400 font-medium">REC ${state.recordedSequence.length}</span></div>`;
