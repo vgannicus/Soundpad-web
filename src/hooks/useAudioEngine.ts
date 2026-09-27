@@ -55,7 +55,10 @@ export function useAudioEngine() {
     const startTime = ctx.currentTime;
     source.start(0, offset);
 
+    const sourceId = `src_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     const sourceObj: ActiveSource = {
+      sourceId,
       source,
       gainNode,
       startTime,
@@ -72,6 +75,8 @@ export function useAudioEngine() {
 
     sources.forEach(s => {
       try {
+        // Disconnect onended BEFORE stopping to prevent stale callbacks
+        s.source.onended = null;
         if (fadeTime > 0) {
           s.gainNode.gain.setValueAtTime(s.gainNode.gain.value, ctx.currentTime);
           s.gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeTime);

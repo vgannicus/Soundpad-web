@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { PadData, TabData, GridConfig, HotCue, RecordedEvent, ActiveSource } from './types';
+import type { PadData, TabData, GridConfig, HotCue, RecordedEvent } from './types';
 import { HOTKEYS, VIBRANT_COLORS } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 
@@ -20,8 +20,9 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
+let _idCounter = 0;
 function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  return `${Date.now().toString(36)}_${(++_idCounter).toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
 }
 
 function createEmptyPad(): PadData {
@@ -40,7 +41,8 @@ function createEmptyPad(): PadData {
     activeSources: [],
     isPlaying: false,
     currentTime: 0,
-    waveform: []
+    waveform: [],
+    currentSourceId: null
   };
 }
 
@@ -170,7 +172,7 @@ function Pad({
 
   const handleClick = (e: React.MouseEvent) => {
     // Don't trigger play if clicking on controls or header areas
-    if ((e.target as HTMLElement).closest('.pad-controls-area, .pad-header-area, .pad-hotcue-area, .pad-progress-area')) return;
+    if ((e.target as HTMLElement).closest('.pad-no-trigger')) return;
     if (pad.buffer) {
       if (pad.isPlaying) {
         onStop(pad.id);
@@ -182,6 +184,7 @@ function Pad({
 
   const handleSeek = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onSeek(pad.id, percent);
@@ -211,7 +214,7 @@ function Pad({
       {/* Clear button */}
       {pad.buffer && (
         <button
-          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/60 border border-zinc-600 
+          className="pad-no-trigger absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/60 border border-zinc-600 
             text-zinc-400 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 
             transition-opacity hover:bg-red-500 hover:text-white hover:border-red-500 z-10"
           onClick={(e) => { e.stopPropagation(); onClear(pad.id); }}
@@ -221,7 +224,7 @@ function Pad({
       )}
 
       {/* Header */}
-      <div className="pad-header-area flex items-center justify-between gap-2 mb-1" onClick={e => e.stopPropagation()}>
+      <div className="pad-no-trigger flex items-center justify-between gap-2 mb-1" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
         <div className="flex items-center gap-1.5">
           <input
             type="color"
@@ -236,13 +239,13 @@ function Pad({
               key={i}
               className="w-3.5 h-3.5 rounded-full border border-zinc-600 cursor-pointer hover:scale-125 transition-transform"
               style={{ backgroundColor: c }}
-              onClick={() => onColorChange(pad.id, c)}
+              onClick={(e) => { e.stopPropagation(); onColorChange(pad.id, c); }}
             />
           ))}
           {hasColor && (
             <button
               className="text-[10px] text-zinc-400 hover:text-red-400 px-1 rounded bg-black/30 border border-zinc-700"
-              onClick={() => onColorChange(pad.id, '')}
+              onClick={(e) => { e.stopPropagation(); onColorChange(pad.id, ''); }}
             >
               ↺
             </button>
@@ -254,7 +257,7 @@ function Pad({
       </div>
 
       {/* Name + Hotkey */}
-      <div className="pad-header-area flex items-center gap-2 mb-1.5 bg-black/30 rounded-md px-2 py-1 border border-zinc-700/50" onClick={e => e.stopPropagation()}>
+      <div className="pad-no-trigger flex items-center gap-2 mb-1.5 bg-black/30 rounded-md px-2 py-1 border border-zinc-700/50" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
         <span className={`text-xs font-bold truncate flex-1 ${hasColor && pad.isPlaying ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]' : 'text-zinc-200'}`}>
           {pad.fileName || '--- Vacío ---'}
         </span>
@@ -272,13 +275,17 @@ function Pad({
             <WaveformDisplay waveform={pad.waveform} progress={progress} color={pad.color} />
             {/* Hotcue markers */}
             {pad.hotcues.length > 0 && (
-              <div className="pad-hotcue-area flex gap-1 mt-1 flex-wrap" onClick={e => e.stopPropagation()}>
+              <div className="flex gap-1 mt-1 flex-wrap">
                 {pad.hotcues.map((cue, i) => (
                   <button
                     key={i}
-                    className="text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform"
+                    className="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform"
                     style={{ backgroundColor: hexToRgba(cue.color, 0.3), borderColor: cue.color, color: cue.color }}
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); onHotcueClick(pad.id, cue); }}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      e.preventDefault();
+                      onHotcueClick(pad.id, cue); 
+                    }}
                     onMouseDown={(e) => e.stopPropagation()}
                   >
                     {cue.label} {formatTime(cue.time)}
@@ -298,7 +305,7 @@ function Pad({
       {/* Progress bar */}
       {pad.buffer && (
         <div
-          className="pad-progress-area relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50"
+          className="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50"
           onClick={handleSeek}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -316,12 +323,12 @@ function Pad({
       )}
 
       {/* Controls */}
-      <div className="pad-controls-area" onClick={e => e.stopPropagation()}>
+      <div className="pad-no-trigger" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-1">
           <button
             className={`w-7 h-7 rounded-md flex items-center justify-center text-sm border transition-all
               ${pad.loop ? 'bg-yellow-500 border-yellow-400 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}`}
-            onClick={() => onToggleLoop(pad.id)}
+            onClick={(e) => { e.stopPropagation(); onToggleLoop(pad.id); }}
             title="Loop"
           >
             🔁
@@ -329,7 +336,7 @@ function Pad({
 
           <button
             className="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-zinc-600 text-zinc-300 hover:bg-zinc-700"
-            onClick={() => onAddHotcue(pad.id)}
+            onClick={(e) => { e.stopPropagation(); onAddHotcue(pad.id); }}
             title="Añadir Hotcue"
           >
             📍
@@ -338,7 +345,7 @@ function Pad({
           <button
             className={`w-7 h-7 rounded-md flex items-center justify-center text-xs border transition-all
               ${showControls ? 'bg-sky-600 border-sky-500 text-white' : 'bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}`}
-            onClick={() => setShowControls(!showControls)}
+            onClick={(e) => { e.stopPropagation(); setShowControls(!showControls); }}
             title="Más opciones"
           >
             ⚙
@@ -414,11 +421,15 @@ export default function App() {
   const audioEngine = useAudioEngine();
   const animFrameRef = useRef<number>(0);
   
-  // Ref to always have the latest tabs data available in callbacks
+  // Refs to always have the latest state in callbacks
   const tabsRef = useRef<TabData[]>(tabs);
   tabsRef.current = tabs;
   const activeTabIdRef = useRef<string>(activeTabId);
   activeTabIdRef.current = activeTabId;
+  const isRecordingRef = useRef(isRecording);
+  isRecordingRef.current = isRecording;
+  const recordStartTimeRef = useRef(recordStartTime);
+  recordStartTimeRef.current = recordStartTime;
 
   const activeTab = tabs.find(t => t.id === activeTabId)!;
 
@@ -447,9 +458,9 @@ export default function App() {
         pads: tab.pads.map(pad => {
           if (pad.activeSources.length > 0 && pad.buffer) {
             const currentTime = audioEngine.getCurrentTime(pad.activeSources, pad.speed, pad.loop, pad.duration);
-            return { ...pad, currentTime, isPlaying: true };
+            return { ...pad, currentTime };
           }
-          return { ...pad, currentTime: 0, isPlaying: false };
+          return { ...pad, currentTime: 0 };
         })
       })));
       animFrameRef.current = requestAnimationFrame(update);
@@ -458,11 +469,15 @@ export default function App() {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [audioEngine]);
 
-  // ATOMIC stop all - stops every sound across ALL tabs
-  const stopAllSounds = useCallback(() => {
+  // ============================================================
+  // CORE AUDIO CONTROL - Only ONE sound at a time, guaranteed
+  // ============================================================
+  
+  // STOP EVERYTHING across all tabs - the nuclear option
+  const stopEverything = useCallback(() => {
     const currentTabs = tabsRef.current;
     
-    // Stop all audio sources immediately
+    // Kill all audio sources immediately (onended is nulled inside stopPad)
     currentTabs.forEach(tab => {
       tab.pads.forEach(pad => {
         if (pad.activeSources.length > 0) {
@@ -471,26 +486,32 @@ export default function App() {
       });
     });
     
-    // Update state atomically - clear ALL tabs
+    // Reset ALL state atomically
     setTabs(prev => prev.map(t => ({
       ...t,
-      pads: t.pads.map(p => ({ ...p, activeSources: [], isPlaying: false, currentTime: 0 }))
+      pads: t.pads.map(p => ({ 
+        ...p, 
+        activeSources: [], 
+        isPlaying: false, 
+        currentTime: 0,
+        currentSourceId: null
+      }))
     })));
   }, [audioEngine]);
 
-  // ATOMIC play pad - stops everything then plays one pad
-  const playPadAtomic = useCallback((padId: string, offset: number = 0) => {
+  // PLAY a pad - guarantees only one sound plays at a time
+  const playPadExclusive = useCallback((padId: string, offset: number = 0) => {
     const currentTabs = tabsRef.current;
     const currentActiveTabId = activeTabIdRef.current;
+    
+    // Find the pad in current state
     const tab = currentTabs.find(t => t.id === currentActiveTabId);
     if (!tab) return;
-    
-    const padIndex = tab.pads.findIndex(p => p.id === padId);
-    if (padIndex === -1) return;
-    const pad = tab.pads[padIndex];
-    if (!pad.buffer) return;
+    const pad = tab.pads.find(p => p.id === padId);
+    if (!pad || !pad.buffer) return;
 
-    // Step 1: Stop ALL existing audio sources across ALL tabs
+    // STEP 1: Kill ALL existing audio across ALL tabs
+    // This disconnects onended handlers so they won't fire
     currentTabs.forEach(t => {
       t.pads.forEach(p => {
         if (p.activeSources.length > 0) {
@@ -499,59 +520,93 @@ export default function App() {
       });
     });
 
-    // Step 2: Create new audio source
+    // STEP 2: Create the new audio source
     const sourceObj = audioEngine.playPad(pad, offset);
     if (!sourceObj) return;
 
-    // Step 3: Update ALL state atomically in a single setTabs call
+    const newSourceId = sourceObj.sourceId;
+
+    // STEP 3: Update ALL state in ONE atomic operation
     setTabs(prev => prev.map(t => {
       if (t.id !== currentActiveTabId) {
-        // Clear all other tabs' playing state
+        // Clear all other tabs completely
         return {
           ...t,
-          pads: t.pads.map(p => ({ ...p, activeSources: [], isPlaying: false, currentTime: 0 }))
+          pads: t.pads.map(p => ({ 
+            ...p, 
+            activeSources: [], 
+            isPlaying: false, 
+            currentTime: 0,
+            currentSourceId: null
+          }))
         };
       }
-      // Update active tab: clear all pads, then set the playing one
+      // Update active tab: reset all pads, then activate the target
       return {
         ...t,
-        pads: t.pads.map((p, i) => {
-          if (i === padIndex) {
-            return { ...p, activeSources: [sourceObj], isPlaying: true, currentTime: offset };
+        pads: t.pads.map(p => {
+          if (p.id === padId) {
+            return { 
+              ...p, 
+              activeSources: [sourceObj], 
+              isPlaying: true, 
+              currentTime: offset,
+              currentSourceId: newSourceId
+            };
           }
-          return { ...p, activeSources: [], isPlaying: false, currentTime: 0 };
+          return { 
+            ...p, 
+            activeSources: [], 
+            isPlaying: false, 
+            currentTime: 0,
+            currentSourceId: null
+          };
         })
       };
     }));
 
-    // Set up onended handler
+    // STEP 4: Set onended handler that checks identity
+    // Only clears state if THIS source is still the active one
     sourceObj.source.onended = () => {
       setTabs(prev => prev.map(t => {
         if (t.id !== currentActiveTabId) return t;
         return {
           ...t,
-          pads: t.pads.map(p => p.id === padId ? { ...p, activeSources: [], isPlaying: false } : p)
+          pads: t.pads.map(p => {
+            // Only clear if this source is still the current one for this pad
+            if (p.id === padId && p.currentSourceId === newSourceId) {
+              return { ...p, activeSources: [], isPlaying: false, currentSourceId: null };
+            }
+            return p;
+          })
         };
       }));
     };
   }, [audioEngine]);
 
-  // Stop a single pad
-  const stopPadAtomic = useCallback((padId: string) => {
+  // STOP a single pad
+  const stopSinglePad = useCallback((padId: string) => {
     const currentTabs = tabsRef.current;
     const currentActiveTabId = activeTabIdRef.current;
     const tab = currentTabs.find(t => t.id === currentActiveTabId);
     if (!tab) return;
     const pad = tab.pads.find(p => p.id === padId);
-    if (!pad) return;
+    if (!pad || pad.activeSources.length === 0) return;
 
+    // Stop audio (disconnects onended)
     audioEngine.stopPad(pad.activeSources, pad.fadeTime);
 
+    // Update state
     setTabs(prev => prev.map(t => {
       if (t.id !== currentActiveTabId) return t;
       return {
         ...t,
-        pads: t.pads.map(p => p.id === padId ? { ...p, activeSources: [], isPlaying: false } : p)
+        pads: t.pads.map(p => p.id === padId ? { 
+          ...p, 
+          activeSources: [], 
+          isPlaying: false, 
+          currentSourceId: null 
+        } : p)
       };
     }));
   }, [audioEngine]);
@@ -565,34 +620,34 @@ export default function App() {
     const pad = tab.pads.find(p => p.id === padId);
     if (!pad || !pad.buffer) return;
 
-    // If clicking same pad that's playing without offset, toggle stop
+    // If clicking same pad that's playing without offset → toggle stop
     if (pad.isPlaying && offset === undefined) {
-      stopPadAtomic(padId);
+      stopSinglePad(padId);
       return;
     }
 
     // Record event if recording
-    if (isRecording) {
+    if (isRecordingRef.current) {
       setRecordedSequence(prev => [...prev, {
         padId,
-        time: Date.now() - recordStartTime,
+        time: Date.now() - recordStartTimeRef.current,
         action: 'play'
       }]);
     }
 
-    // Play atomically (stops everything else first)
-    playPadAtomic(padId, offset);
-  }, [isRecording, recordStartTime, playPadAtomic, stopPadAtomic]);
+    // Play exclusively (stops everything else)
+    playPadExclusive(padId, offset);
+  }, [playPadExclusive, stopSinglePad]);
 
   // Handle stop for a single pad
   const handleStopPad = useCallback((padId: string) => {
-    stopPadAtomic(padId);
-  }, [stopPadAtomic]);
+    stopSinglePad(padId);
+  }, [stopSinglePad]);
 
   // Handle STOP ALL button
   const handleStopAll = useCallback(() => {
-    stopAllSounds();
-  }, [stopAllSounds]);
+    stopEverything();
+  }, [stopEverything]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -603,18 +658,24 @@ export default function App() {
       // Space = stop all
       if (e.code === 'Space') {
         e.preventDefault();
-        stopAllSounds();
+        stopEverything();
         return;
       }
       
-      // R = toggle recording
+      // Ctrl+R = toggle recording
       if (key === 'R' && e.ctrlKey) {
         e.preventDefault();
-        toggleRecording();
+        setIsRecording(prev => {
+          if (!prev) {
+            setRecordedSequence([]);
+            setRecordStartTime(Date.now());
+          }
+          return !prev;
+        });
         return;
       }
       
-      // Hotkeys
+      // Hotkeys for pads
       const index = HOTKEYS.indexOf(key);
       if (index !== -1) {
         const currentTabs = tabsRef.current;
@@ -623,16 +684,16 @@ export default function App() {
         if (tab && tab.pads[index] && tab.pads[index].buffer) {
           const pad = tab.pads[index];
           if (pad.isPlaying) {
-            stopPadAtomic(pad.id);
+            stopSinglePad(pad.id);
           } else {
-            playPadAtomic(pad.id);
+            playPadExclusive(pad.id);
           }
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [stopAllSounds, stopPadAtomic, playPadAtomic]);
+  }, [stopEverything, stopSinglePad, playPadExclusive]);
 
   // Save to localStorage
   useEffect(() => {
@@ -669,7 +730,8 @@ export default function App() {
               buffer: null,
               activeSources: [],
               isPlaying: false,
-              currentTime: 0
+              currentTime: 0,
+              currentSourceId: null
             }))
           })));
         }
@@ -698,14 +760,14 @@ export default function App() {
   }, [activeTabId, audioEngine]);
 
   const handleClearPad = useCallback((padId: string) => {
-    stopPadAtomic(padId);
+    stopSinglePad(padId);
     setTabs(prev => prev.map(t => t.id === activeTabId ? {
       ...t,
       pads: t.pads.map(p => p.id === padId ? {
-        ...p, buffer: null, fileName: '', duration: 0, waveform: [], color: '', hotcues: []
+        ...p, buffer: null, fileName: '', duration: 0, waveform: [], color: '', hotcues: [], currentSourceId: null
       } : p)
     } : t));
-  }, [activeTabId, stopPadAtomic]);
+  }, [activeTabId, stopSinglePad]);
 
   const handleToggleLoop = useCallback((padId: string) => {
     setTabs(prev => prev.map(t => t.id === activeTabId ? {
@@ -766,10 +828,9 @@ export default function App() {
     const pad = tab.pads.find(p => p.id === padId);
     if (!pad || !pad.buffer) return;
     const offset = percent * pad.duration;
-    
-    // Play from seek position (this will stop everything else atomically)
-    playPadAtomic(padId, offset);
-  }, [playPadAtomic]);
+    // Play from seek position (stops everything else first)
+    playPadExclusive(padId, offset);
+  }, [playPadExclusive]);
 
   const handleAddHotcue = useCallback((padId: string) => {
     const currentTabs = tabsRef.current;
@@ -789,10 +850,10 @@ export default function App() {
     } : t));
   }, [activeTabId]);
 
-  // Hotcue click - plays from that position (stops everything else first)
+  // Hotcue click - plays from that position (stops everything else first, ONE sound only)
   const handleHotcueClick = useCallback((padId: string, cue: HotCue) => {
-    playPadAtomic(padId, cue.time);
-  }, [playPadAtomic]);
+    playPadExclusive(padId, cue.time);
+  }, [playPadExclusive]);
 
   const handleMasterVolume = useCallback((vol: number) => {
     setMasterVolume(vol);
@@ -800,6 +861,7 @@ export default function App() {
   }, [audioEngine]);
 
   const addTab = () => {
+    stopEverything();
     const newTab: TabData = { id: generateId(), name: `Bank ${tabs.length + 1}`, pads: [] };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTab.id);
@@ -807,7 +869,7 @@ export default function App() {
 
   const deleteTab = (id: string) => {
     if (tabs.length <= 1) return;
-    stopAllSounds();
+    stopEverything();
     const newTabs = tabs.filter(t => t.id !== id);
     setTabs(newTabs);
     if (activeTabId === id) setActiveTabId(newTabs[0].id);
@@ -837,7 +899,7 @@ export default function App() {
     recordedSequence.forEach(event => {
       setTimeout(() => {
         if (event.action === 'play') {
-          playPadAtomic(event.padId);
+          playPadExclusive(event.padId);
         }
       }, event.time);
     });
@@ -867,7 +929,7 @@ export default function App() {
   const importConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    stopAllSounds();
+    stopEverything();
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -882,7 +944,8 @@ export default function App() {
               buffer: null,
               activeSources: [],
               isPlaying: false,
-              currentTime: 0
+              currentTime: 0,
+              currentSourceId: null
             }))
           })));
         }
@@ -915,7 +978,7 @@ export default function App() {
                   ? 'bg-sky-500/15 text-sky-300 border-sky-500/50 shadow-[0_0_8px_rgba(14,165,233,0.2)]'
                   : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-zinc-200'
                 }`}
-              onClick={() => { stopAllSounds(); setActiveTabId(tab.id); }}
+              onClick={() => { stopEverything(); setActiveTabId(tab.id); }}
               onDoubleClick={() => renameTab(tab.id)}
             >
               <span>{tab.name}</span>

@@ -20,9 +20,11 @@ export interface PadData {
   isPlaying: boolean;
   currentTime: number;
   waveform: number[];
+  currentSourceId: string | null;
 }
 
 export interface ActiveSource {
+  sourceId: string;
   source: AudioBufferSourceNode;
   gainNode: GainNode;
   startTime: number;
