@@ -333,7 +333,7 @@ function render() {
       else style += `box-shadow:0 0 8px ${hexToRgba(padColor,0.2)};`;
     }
 
-    let classes = 'pad relative rounded-xl p-3 flex flex-col min-h-[180px] cursor-pointer select-none overflow-hidden group ';
+    let classes = 'pad relative rounded-xl p-3 flex flex-col cursor-pointer select-none overflow-hidden group ';
     classes += hasColor ? 'border-2 ' : 'border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700/80 hover:border-zinc-500 ';
     if (pad.isPlaying) classes += 'ring-2 ring-green-400/60 ';
     if (pad.loop && pad.isPlaying) classes += 'ring-yellow-400/60 ';
@@ -363,31 +363,35 @@ function render() {
     if (hotkey) html += `<span class="text-[10px] font-mono px-1.5 py-0.5 rounded border ${hasColor ? 'bg-black/50 text-white border-white/30' : 'bg-zinc-900 text-zinc-500 border-zinc-700'}">${hotkey}</span>`;
     html += `</div>`;
 
-    // Waveform / Dropzone
-    html += `<div class="flex-1 flex flex-col justify-center mb-1.5">`;
+    // Waveform / Dropzone - Fixed height
+    html += `<div class="flex-shrink-0 mb-1.5">`;
     if (pad.buffer) {
-      html += renderWaveform(pad.waveform, progress, pad.color);
-      if (pad.hotcues.length > 0) {
-        html += `<div class="flex gap-1 mt-1 flex-wrap">`;
-        pad.hotcues.forEach((cue, ci) => {
-          html += `<button class="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform" style="background:${hexToRgba(cue.color,0.3)};border-color:${cue.color};color:${cue.color}" onclick="event.stopPropagation();event.preventDefault();clickHotcue('${pad.id}',${ci})" onmousedown="event.stopPropagation()">${cue.label} ${formatTime(cue.time)}</button>`;
-        });
-        html += `</div>`;
-      }
+      html += `<div class="h-8">` + renderWaveform(pad.waveform, progress, pad.color) + `</div>`;
     } else {
-      html += `<div class="flex-1 flex items-center justify-center border-2 border-dashed rounded-lg text-xs font-semibold border-zinc-600 text-zinc-500">🎵 Arrastra audio</div>`;
+      html += `<div class="h-8 flex items-center justify-center border-2 border-dashed rounded-lg text-xs font-semibold border-zinc-600 text-zinc-500">🎵 Arrastra audio</div>`;
     }
     html += `</div>`;
 
-    // Progress bar - ALWAYS VISIBLE
+    // Hotcues - Separate area with scroll if needed
+    if (pad.buffer && pad.hotcues.length > 0) {
+      html += `<div class="pad-no-trigger flex-shrink-0 mb-1.5 max-h-12 overflow-y-auto" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">`;
+      html += `<div class="flex gap-1 flex-wrap">`;
+      pad.hotcues.forEach((cue, ci) => {
+        html += `<button class="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform flex-shrink-0" style="background:${hexToRgba(cue.color,0.3)};border-color:${cue.color};color:${cue.color}" onclick="event.stopPropagation();event.preventDefault();clickHotcue('${pad.id}',${ci})" onmousedown="event.stopPropagation()">${cue.label} ${formatTime(cue.time)}</button>`;
+      });
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    // Progress bar - ALWAYS VISIBLE, fixed position
     if (pad.buffer) {
       const fillColor = hasColor ? hexToRgba(padColor, 0.6) : '#0ea5e9';
-      html += `<div class="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50" onclick="event.stopPropagation();seekPad('${pad.id}',event)" onmousedown="event.stopPropagation()">`;
+      html += `<div id="progress-${pad.id}" class="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50 flex-shrink-0" onclick="event.stopPropagation();seekPad('${pad.id}',event)" onmousedown="event.stopPropagation()">`;
       html += `<div class="absolute inset-y-0 left-0 transition-all duration-75" style="width:${progress*100}%;background:${fillColor}"></div>`;
       html += `<span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.9)">-${formatTime(pad.duration - pad.currentTime)}</span>`;
       html += `</div>`;
     } else {
-      html += `<div class="relative h-4 bg-zinc-900/50 rounded overflow-hidden mb-1.5 border border-zinc-800"><span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-zinc-600">0:00</span></div>`;
+      html += `<div id="progress-${pad.id}" class="relative h-4 bg-zinc-900/50 rounded overflow-hidden mb-1.5 border border-zinc-800 flex-shrink-0"><span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-zinc-600">0:00</span></div>`;
     }
 
     // Controls
@@ -631,27 +635,28 @@ function progressLoop() {
   if (tab) {
     tab.pads.forEach(pad => {
       if (!pad.buffer) return;
-      const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
-      if (!el) return;
-      const bars = el.querySelectorAll('.relative.h-4');
-      bars.forEach(bar => {
-        const fill = bar.querySelector('.absolute.inset-y-0');
-        const txt = bar.querySelector('span');
-        if (fill) {
-          const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
-          fill.style.width = `${p*100}%`;
-        }
-        if (txt) txt.textContent = `-${formatTime(pad.duration - pad.currentTime)}`;
-      });
-      // Update waveform progress
-      const wfContainer = el.querySelector('.flex.items-end');
-      if (wfContainer && pad.waveform.length > 0) {
-        const bars2 = wfContainer.children;
+      const progressBar = document.getElementById(`progress-${pad.id}`);
+      if (!progressBar) return;
+      const fill = progressBar.querySelector('.absolute.inset-y-0');
+      const txt = progressBar.querySelector('span');
+      if (fill) {
         const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
-        const barColor = pad.color || '#0ea5e9';
-        for (let i = 0; i < bars2.length; i++) {
-          const isActive = (i / pad.waveform.length) <= p;
-          bars2[i].style.backgroundColor = isActive ? barColor : 'rgba(255,255,255,0.15)';
+        fill.style.width = `${p*100}%`;
+      }
+      if (txt) txt.textContent = `-${formatTime(pad.duration - pad.currentTime)}`;
+      
+      // Update waveform progress
+      const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
+      if (el && pad.waveform.length > 0) {
+        const wfContainer = el.querySelector('.h-8 .flex.items-end');
+        if (wfContainer) {
+          const bars2 = wfContainer.children;
+          const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
+          const barColor = pad.color || '#0ea5e9';
+          for (let i = 0; i < bars2.length; i++) {
+            const isActive = (i / pad.waveform.length) <= p;
+            bars2[i].style.backgroundColor = isActive ? barColor : 'rgba(255,255,255,0.15)';
+          }
         }
       }
     });
