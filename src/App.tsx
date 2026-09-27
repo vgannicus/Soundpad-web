@@ -128,6 +128,7 @@ function Pad({
   onColorChange,
   onSeek,
   onAddHotcue,
+  onClearHotcues,
   onHotcueClick,
   recentColors
 }: {
@@ -144,6 +145,7 @@ function Pad({
   onColorChange: (id: string, color: string) => void;
   onSeek: (id: string, percent: number) => void;
   onAddHotcue: (id: string) => void;
+  onClearHotcues: (id: string) => void;
   onHotcueClick: (id: string, cue: HotCue) => void;
   recentColors: string[];
 }) {
@@ -302,13 +304,14 @@ function Pad({
         )}
       </div>
 
-      {/* Progress bar */}
-      {pad.buffer && (
-        <div
-          className="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50"
-          onClick={handleSeek}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
+      {/* Progress bar - always visible */}
+      <div
+        className={`pad-no-trigger relative h-4 rounded overflow-hidden mb-1.5 border transition-colors
+          ${pad.buffer ? 'bg-black/50 cursor-pointer border-zinc-700/50' : 'bg-zinc-900/50 cursor-default border-zinc-800'}`}
+        onClick={pad.buffer ? handleSeek : undefined}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {pad.buffer && (
           <div
             className="absolute inset-y-0 left-0 transition-all duration-75"
             style={{
@@ -316,11 +319,12 @@ function Pad({
               backgroundColor: hasColor ? hexToRgba(padColor, 0.6) : '#0ea5e9'
             }}
           />
-          <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-            -{formatTime(pad.duration - pad.currentTime)}
-          </span>
-        </div>
-      )}
+        )}
+        <span className={`absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]
+          ${pad.buffer ? 'text-white' : 'text-zinc-600'}`}>
+          {pad.buffer ? `-${formatTime(pad.duration - pad.currentTime)}` : '0:00'}
+        </span>
+      </div>
 
       {/* Controls */}
       <div className="pad-no-trigger" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
@@ -337,10 +341,20 @@ function Pad({
           <button
             className="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-zinc-600 text-zinc-300 hover:bg-zinc-700"
             onClick={(e) => { e.stopPropagation(); onAddHotcue(pad.id); }}
-            title="Añadir Hotcue"
+            title="Añadir Hotcue en posición actual"
           >
             📍
           </button>
+
+          {pad.hotcues.length > 0 && (
+            <button
+              className="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-red-500/40 text-red-400 hover:bg-red-500/20 hover:border-red-500 transition-all"
+              onClick={(e) => { e.stopPropagation(); onClearHotcues(pad.id); }}
+              title={`Limpiar ${pad.hotcues.length} hotcue(s)`}
+            >
+              🗑
+            </button>
+          )}
 
           <button
             className={`w-7 h-7 rounded-md flex items-center justify-center text-xs border transition-all
@@ -850,6 +864,13 @@ export default function App() {
     } : t));
   }, [activeTabId]);
 
+  const handleClearHotcues = useCallback((padId: string) => {
+    setTabs(prev => prev.map(t => t.id === activeTabId ? {
+      ...t,
+      pads: t.pads.map(p => p.id === padId ? { ...p, hotcues: [] } : p)
+    } : t));
+  }, [activeTabId]);
+
   // Hotcue click - plays from that position (stops everything else first, ONE sound only)
   const handleHotcueClick = useCallback((padId: string, cue: HotCue) => {
     playPadExclusive(padId, cue.time);
@@ -1115,6 +1136,7 @@ export default function App() {
             onColorChange={handleColorChange}
             onSeek={handleSeek}
             onAddHotcue={handleAddHotcue}
+            onClearHotcues={handleClearHotcues}
             onHotcueClick={handleHotcueClick}
             recentColors={recentColors}
           />
