@@ -216,34 +216,47 @@ function stopSinglePad(padId) {
 }
 
 function clearAllPads() {
+  console.log('clearAllPads called');
   const tab = getActiveTab();
-  if (!tab) return;
-  if (!confirm('¿Limpiar todos los soundpads del tab actual?')) return;
+  if (!tab) {
+    console.error('No active tab found');
+    alert('Error: No se encontró el tab activo');
+    return;
+  }
+  
+  console.log('Active tab:', tab.name, 'Pads:', tab.pads.length);
+  
+  if (!confirm('¿Limpiar todos los soundpads del tab actual?\n\nEsta acción eliminará todos los archivos de audio del tab "' + tab.name + '".\n\nEsta acción no se puede deshacer.')) {
+    console.log('User cancelled clear operation');
+    return;
+  }
   
   // Stop all audio first
+  let clearedCount = 0;
   tab.pads.forEach(pad => {
-    if (pad.activeSources.length > 0) {
+    if (pad.activeSources && pad.activeSources.length > 0) {
       stopSources(pad.activeSources, 0);
       pad.activeSources = [];
     }
     pad.isPlaying = false;
     pad.currentSourceId = null;
-  });
-  
-  // Clear all pads
-  tab.pads.forEach(pad => {
     pad.buffer = null;
     pad.fileName = '';
     pad.duration = 0;
     pad.waveform = [];
     pad.currentTime = 0;
+    clearedCount++;
   });
   
+  console.log('Cleared', clearedCount, 'pads in tab:', tab.name);
   render();
+  alert('Se limpiaron ' + clearedCount + ' soundpads del tab "' + tab.name + '"');
 }
 
 function setGlobalPitch(val) {
-  state.globalPitch = parseFloat(val);
+  const pitch = parseFloat(val);
+  if (isNaN(pitch) || pitch < 0.1 || pitch > 4) return;
+  state.globalPitch = pitch;
   // Update all currently playing sources
   state.tabs.forEach(tab => {
     tab.pads.forEach(pad => {
@@ -377,7 +390,7 @@ function render() {
   html += `<div class="flex-1"></div>`;
   
   // Global Pitch control
-  html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🎵 Pitch:</span><input type="range" min="0.5" max="2" step="0.01" value="${state.globalPitch}" oninput="setGlobalPitch(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-10">${state.globalPitch.toFixed(2)}x</span></div>`;
+  html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🎵 Pitch:</span><input type="range" min="0.1" max="4" step="0.01" value="${state.globalPitch}" oninput="setGlobalPitch(this.value);document.getElementById('pitch-input').value=this.value" class="w-24"><input type="number" id="pitch-input" min="0.1" max="4" step="0.01" value="${state.globalPitch}" onchange="setGlobalPitch(this.value);document.querySelector('input[type=range][oninput*=setGlobalPitch]').value=this.value" class="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:border-sky-500 focus:outline-none"><span class="text-xs text-zinc-300 font-mono">x</span></div>`;
   
   html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🔊 Master:</span><input type="range" min="0" max="1" step="0.01" value="${state.masterVolume}" oninput="setMasterVol(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-8">${Math.round(state.masterVolume*100)}%</span></div>`;
   if (state.isRecording) {
