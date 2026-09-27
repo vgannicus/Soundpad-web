@@ -3,34 +3,34 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="description" content="SoundPad Pro - Aplicación web profesional de soundpad">
-<meta name="theme-color" content="#09090b">
 <title>SoundPad Pro - Neon Edition</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
+  :root { --accent: #0ea5e9; }
+  * { -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: #09090b; }
   ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: #71717a; }
   input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; background: #3f3f46; border-radius: 2px; outline: none; }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; cursor: pointer; box-shadow: 0 0 4px rgba(255,255,255,0.3); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; cursor: pointer; }
   input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; cursor: pointer; border: none; }
-  input[type="color"] { -webkit-appearance: none; appearance: none; border: none; cursor: pointer; padding: 0; }
+  input[type="color"] { -webkit-appearance: none; border: none; cursor: pointer; padding: 0; }
   input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
   input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; }
   input[type="number"] { -moz-appearance: textfield; }
   input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .pad { transition: all 0.15s ease-out; }
+  .pad:hover { transform: translateY(-1px); }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
   .animate-in { animation: fadeIn 0.2s ease-out; }
+  @keyframes pulse-glow { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
   .pad-no-trigger { cursor: default; }
 </style>
 </head>
 <body class="bg-[#09090b] text-white overflow-hidden h-screen">
-<div id="soundpad-app" class="h-screen flex flex-col"></div>
-<div id="root" style="display:none"></div>
+<div id="app" class="h-screen flex flex-col"></div>
 
 <script>
 // ============ UTILIDADES ============
@@ -168,7 +168,7 @@ function playPadExclusive(padId, offset = 0) {
   const pad = tab.pads.find(p => p.id === padId);
   if (!pad || !pad.buffer) return;
 
-  // Stop ALL existing audio across ALL tabs
+  // Stop ALL existing audio
   state.tabs.forEach(t => {
     t.pads.forEach(p => {
       if (p.activeSources.length > 0) stopSources(p.activeSources, 0);
@@ -260,7 +260,7 @@ function renderWaveform(waveform, progress, color) {
     const isActive = (i / waveform.length) <= progress;
     const bg = isActive ? barColor : 'rgba(255,255,255,0.15)';
     const h = Math.max(15, val * 100);
-    html += `<div style="flex:1;height:${h}%;background:${bg};min-width:1px;border-radius:1px 1px 0 0"></div>`;
+    html += `<div class="flex-1 rounded-t-[1px]" style="height:${h}%;background:${bg};min-width:1px"></div>`;
   });
   html += '</div>';
   return html;
@@ -270,19 +270,19 @@ function render() {
   ensurePads();
   const tab = getActiveTab();
   if (!tab) return;
-  const app = document.getElementById('soundpad-app');
+  const app = document.getElementById('app');
 
   let html = '';
 
   // HEADER
-  html += `<header class="bg-zinc-900/95 border-b border-zinc-800 px-4 py-2.5 flex items-center gap-3 flex-wrap shrink-0">`;
-  html += `<h1 class="text-lg font-black tracking-tight mr-2" style="background:linear-gradient(to right,#38bdf8,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">🎛️ SoundPad Pro</h1>`;
+  html += `<header class="bg-zinc-900/95 backdrop-blur-sm border-b border-zinc-800 px-4 py-2.5 flex items-center gap-3 flex-wrap shrink-0">`;
+  html += `<h1 class="text-lg font-black tracking-tight mr-2" style="background:linear-gradient(to right,#38bdf8,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">🎛️ SoundPad Pro</h1>`;
 
   // Tabs
   html += `<div class="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0">`;
   state.tabs.forEach(t => {
     const active = t.id === state.activeTabId;
-    html += `<div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-sm font-medium border whitespace-nowrap ${active ? 'bg-sky-500/15 text-sky-300 border-sky-500/50' : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-zinc-200'}" onclick="switchTab('${t.id}')" ondblclick="renameTab('${t.id}')">
+    html += `<div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-sm font-medium border transition-all whitespace-nowrap ${active ? 'bg-sky-500/15 text-sky-300 border-sky-500/50' : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'}" onclick="switchTab('${t.id}')" ondblclick="renameTab('${t.id}')">
       <span>${t.name}</span>
       ${state.tabs.length > 1 ? `<span class="text-xs opacity-50 hover:opacity-100 hover:text-red-400" onclick="event.stopPropagation();deleteTab('${t.id}')">✕</span>` : ''}
     </div>`;
@@ -297,7 +297,7 @@ function render() {
   html += `<div class="flex items-center gap-2">`;
   html += `<button onclick="exportConfig()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Exportar">💾</button>`;
   html += `<label class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm cursor-pointer" title="Importar">📂<input type="file" accept=".json" class="hidden" onchange="importConfig(event)"></label>`;
-  html += `<button onclick="toggleRecording()" class="px-2.5 py-1.5 rounded-lg border text-sm ${state.isRecording ? 'bg-red-500/20 border-red-500 text-red-400' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-700'}" title="Grabar (Ctrl+R)">${state.isRecording ? '⏺' : '🔴'}</button>`;
+  html += `<button onclick="toggleRecording()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm ${state.isRecording ? 'bg-red-500/20 border-red-500 text-red-400' : ''}" title="Grabar (Ctrl+R)">${state.isRecording ? '⏺' : '🔴'}</button>`;
   if (state.recordedSequence.length > 0 && !state.isRecording) {
     html += `<button onclick="playSequence()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Reproducir secuencia">▶️</button>`;
   }
@@ -306,14 +306,14 @@ function render() {
 
   // CONTROLS BAR
   html += `<div class="bg-zinc-900/70 border-b border-zinc-800 px-4 py-2 flex items-center gap-4 flex-wrap shrink-0">`;
-  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Cols:</label><input type="number" min="1" max="12" value="${state.grid.cols}" onchange="setCols(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
-  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Filas:</label><input type="number" min="1" max="12" value="${state.grid.rows}" onchange="setRows(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400">Cols:</label><input type="number" min="1" max="12" value="${state.grid.cols}" onchange="setCols(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400">Filas:</label><input type="number" min="1" max="12" value="${state.grid.rows}" onchange="setRows(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
   html += `<div class="flex-1"></div>`;
   html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🔊 Master:</span><input type="range" min="0" max="1" step="0.01" value="${state.masterVolume}" oninput="setMasterVol(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-8">${Math.round(state.masterVolume*100)}%</span></div>`;
   if (state.isRecording) {
-    html += `<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30"><div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span class="text-xs text-red-400 font-medium">REC ${state.recordedSequence.length}</span></div>`;
+    html += `<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30"><div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span class="text-xs text-red-400">REC ${state.recordedSequence.length}</span></div>`;
   }
-  html += `<div class="text-[10px] text-zinc-600 hidden md:block">Espacio = Stop All | Ctrl+R = Grabar</div>`;
+  html += `<div class="text-[10px] text-zinc-600 hidden md:block">Espacio=Stop | Ctrl+R=Grabar</div>`;
   html += `</div>`;
 
   // GRID
@@ -328,6 +328,7 @@ function render() {
     let style = '';
     if (hasColor) {
       const bgOp = pad.isPlaying ? 0.4 : 0.12;
+      const shadowOp = pad.isPlaying ? 0.5 : 0.2;
       style = `border-color:${padColor};background:${hexToRgba(padColor, bgOp)};`;
       if (pad.isPlaying) style += `box-shadow:0 0 25px ${hexToRgba(padColor,0.5)},inset 0 0 15px ${hexToRgba(padColor,0.2)};`;
       else style += `box-shadow:0 0 8px ${hexToRgba(padColor,0.2)};`;
@@ -335,7 +336,7 @@ function render() {
 
     let classes = 'pad relative rounded-xl p-3 flex flex-col min-h-[180px] cursor-pointer select-none overflow-hidden group ';
     classes += hasColor ? 'border-2 ' : 'border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700/80 hover:border-zinc-500 ';
-    if (pad.isPlaying) classes += 'ring-2 ring-green-400/60 ';
+    if (pad.isPlaying) classes += 'ring-2 ring-green-400/60 shadow-[0_0_20px_rgba(34,197,94,0.3)] ';
     if (pad.loop && pad.isPlaying) classes += 'ring-yellow-400/60 ';
 
     html += `<div class="${classes}" style="${style}" onclick="clickPad('${pad.id}', event)" data-pad-id="${pad.id}">`;
@@ -350,7 +351,7 @@ function render() {
     html += `<div class="flex items-center gap-1.5">`;
     html += `<input type="color" value="${pad.color || '#000000'}" onchange="setColor('${pad.id}',this.value)" class="w-5 h-5 rounded-full border border-zinc-600 bg-transparent" title="Color">`;
     state.recentColors.slice(0,3).forEach(c => {
-      html += `<div class="w-3.5 h-3.5 rounded-full border border-zinc-600 cursor-pointer hover:scale-125 transition-transform" style="background:${c}" onclick="event.stopPropagation();setColor('${pad.id}','${c}')"></div>`;
+      html += `<div class="w-3.5 h-3.5 rounded-full border border-zinc-600 cursor-pointer hover:scale-125" style="background:${c}" onclick="event.stopPropagation();setColor('${pad.id}','${c}')"></div>`;
     });
     if (hasColor) html += `<button class="text-[10px] text-zinc-400 hover:text-red-400 px-1 rounded bg-black/30 border border-zinc-700" onclick="event.stopPropagation();setColor('${pad.id}','')">↺</button>`;
     html += `</div>`;
@@ -370,12 +371,12 @@ function render() {
       if (pad.hotcues.length > 0) {
         html += `<div class="flex gap-1 mt-1 flex-wrap">`;
         pad.hotcues.forEach((cue, ci) => {
-          html += `<button class="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform" style="background:${hexToRgba(cue.color,0.3)};border-color:${cue.color};color:${cue.color}" onclick="event.stopPropagation();event.preventDefault();clickHotcue('${pad.id}',${ci})" onmousedown="event.stopPropagation()">${cue.label} ${formatTime(cue.time)}</button>`;
+          html += `<button class="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105" style="background:${hexToRgba(cue.color,0.3)};border-color:${cue.color};color:${cue.color}" onclick="event.stopPropagation();event.preventDefault();clickHotcue('${pad.id}',${ci})" onmousedown="event.stopPropagation()">${cue.label} ${formatTime(cue.time)}</button>`;
         });
         html += `</div>`;
       }
     } else {
-      html += `<div class="flex-1 flex items-center justify-center border-2 border-dashed rounded-lg text-xs font-semibold border-zinc-600 text-zinc-500">🎵 Arrastra audio</div>`;
+      html += `<div class="flex-1 flex items-center justify-center border-2 border-dashed rounded-lg text-xs font-semibold border-zinc-600 text-zinc-500" id="dropzone-${pad.id}">🎵 Arrastra audio</div>`;
     }
     html += `</div>`;
 
@@ -383,7 +384,7 @@ function render() {
     if (pad.buffer) {
       const fillColor = hasColor ? hexToRgba(padColor, 0.6) : '#0ea5e9';
       html += `<div class="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50" onclick="event.stopPropagation();seekPad('${pad.id}',event)" onmousedown="event.stopPropagation()">`;
-      html += `<div class="absolute inset-y-0 left-0 transition-all duration-75" style="width:${progress*100}%;background:${fillColor}"></div>`;
+      html += `<div class="absolute inset-y-0 left-0" style="width:${progress*100}%;background:${fillColor}"></div>`;
       html += `<span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.9)">-${formatTime(pad.duration - pad.currentTime)}</span>`;
       html += `</div>`;
     } else {
@@ -395,24 +396,24 @@ function render() {
     html += `<div class="flex items-center justify-between gap-1">`;
 
     // Loop
-    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-sm border transition-all ${pad.loop ? 'bg-yellow-500 border-yellow-400 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}" onclick="toggleLoop('${pad.id}')" title="Loop">🔁</button>`;
+    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-sm border ${pad.loop ? 'bg-yellow-500 border-yellow-400 text-black' : 'bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}" onclick="toggleLoop('${pad.id}')" title="Loop">🔁</button>`;
 
     // Add hotcue
     html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-zinc-600 text-zinc-300 hover:bg-zinc-700" onclick="addHotcue('${pad.id}')" title="Añadir Hotcue">📍</button>`;
 
     // Clear hotcues
     if (pad.hotcues.length > 0) {
-      html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-red-500/40 text-red-400 hover:bg-red-500/20 hover:border-red-500 transition-all" onclick="clearHotcues('${pad.id}')" title="Limpiar ${pad.hotcues.length} hotcue(s)">🗑</button>`;
+      html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-red-500/40 text-red-400 hover:bg-red-500/20 hover:border-red-500" onclick="clearHotcues('${pad.id}')" title="Limpiar ${pad.hotcues.length} hotcue(s)">🗑</button>`;
     }
 
     // Settings toggle
-    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs border transition-all bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700" onclick="togglePadSettings('${pad.id}')" title="Opciones">⚙</button>`;
+    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs border bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700" onclick="togglePadSettings('${pad.id}')" title="Opciones" id="settings-btn-${pad.id}">⚙</button>`;
 
     // Volume
     html += `<div class="flex items-center gap-1 ml-auto"><span class="text-[10px] text-zinc-400">🔊</span><input type="range" min="0" max="1.5" step="0.01" value="${pad.volume}" oninput="setPadVol('${pad.id}',this.value)" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" class="w-14"></div>`;
     html += `</div>`;
 
-    // Extended settings
+    // Extended settings (hidden by default)
     html += `<div id="pad-settings-${pad.id}" class="hidden mt-2 space-y-1.5 pt-2 border-t border-zinc-700/50 animate-in">`;
     if (pad.buffer) {
       html += `<div class="flex items-center gap-2"><span class="text-[10px] text-zinc-400 w-12">Speed:</span><input type="range" min="0.25" max="2" step="0.05" value="${pad.speed}" oninput="setPadSpeed('${pad.id}',this.value)" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" class="flex-1"><span class="text-[10px] text-zinc-300 w-8 text-right">${pad.speed.toFixed(2)}x</span></div>`;
@@ -431,9 +432,9 @@ function render() {
   tab.pads.forEach(pad => {
     const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
     if (!el) return;
-    el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); el.style.borderColor = '#38bdf8'; el.style.backgroundColor = 'rgba(56,189,248,0.1)'; });
-    el.addEventListener('dragleave', () => { el.style.borderColor = ''; el.style.backgroundColor = ''; });
-    el.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); el.style.borderColor = ''; el.style.backgroundColor = ''; handleDrop(e, pad.id); });
+    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('border-sky-400','bg-sky-400/10'); });
+    el.addEventListener('dragleave', () => { el.classList.remove('border-sky-400','bg-sky-400/10'); });
+    el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('border-sky-400','bg-sky-400/10'); handleDrop(e, pad.id); });
   });
 
   saveState();
@@ -617,7 +618,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ============ PROGRESS LOOP (lightweight update) ============
+// ============ PROGRESS LOOP ============
 function progressLoop() {
   state.tabs.forEach(tab => {
     tab.pads.forEach(pad => {
@@ -626,36 +627,23 @@ function progressLoop() {
       }
     });
   });
-  // Update only progress bars (no full re-render)
-  const tab = getActiveTab();
-  if (tab) {
+  // Update progress bars without full re-render
+  state.tabs.forEach(tab => {
+    if (tab.id !== state.activeTabId) return;
     tab.pads.forEach(pad => {
-      if (!pad.buffer) return;
       const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
       if (!el) return;
-      const bars = el.querySelectorAll('.relative.h-4');
-      bars.forEach(bar => {
-        const fill = bar.querySelector('.absolute.inset-y-0');
-        const txt = bar.querySelector('span');
-        if (fill) {
-          const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
-          fill.style.width = `${p*100}%`;
-        }
-        if (txt) txt.textContent = `-${formatTime(pad.duration - pad.currentTime)}`;
-      });
-      // Update waveform progress
-      const wfContainer = el.querySelector('.flex.items-end');
-      if (wfContainer && pad.waveform.length > 0) {
-        const bars2 = wfContainer.children;
-        const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
-        const barColor = pad.color || '#0ea5e9';
-        for (let i = 0; i < bars2.length; i++) {
-          const isActive = (i / pad.waveform.length) <= p;
-          bars2[i].style.backgroundColor = isActive ? barColor : 'rgba(255,255,255,0.15)';
-        }
+      const progressBar = el.querySelector('.relative.h-4');
+      if (!progressBar || !pad.buffer) return;
+      const fill = progressBar.querySelector('.absolute.inset-y-0');
+      const timeText = progressBar.querySelector('span');
+      if (fill) {
+        const progress = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
+        fill.style.width = `${progress*100}%`;
       }
+      if (timeText) timeText.textContent = `-${formatTime(pad.duration - pad.currentTime)}`;
     });
-  }
+  });
   requestAnimationFrame(progressLoop);
 }
 
@@ -683,7 +671,6 @@ render();
 progressLoop();
 drawVisualizer();
 document.addEventListener('click', initAudio, { once: true });
-document.addEventListener('touchstart', initAudio, { once: true });
 </script>
 </body>
 </html>
