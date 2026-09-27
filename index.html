@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="description" content="SoundPad Pro - Aplicación web profesional de soundpad">
+<meta name="theme-color" content="#09090b">
+<title>SoundPad Pro - Neon Edition</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #09090b; }
+  ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #71717a; }
+  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; background: #3f3f46; border-radius: 2px; outline: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; cursor: pointer; box-shadow: 0 0 4px rgba(255,255,255,0.3); }
+  input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; cursor: pointer; border: none; }
+  input[type="color"] { -webkit-appearance: none; appearance: none; border: none; cursor: pointer; padding: 0; }
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; }
+  input[type="number"] { -moz-appearance: textfield; }
+  input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .pad { transition: all 0.15s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-in { animation: fadeIn 0.2s ease-out; }
+  .pad-no-trigger { cursor: default; }
+</style>
+</head>
+<body class="bg-[#09090b] text-white overflow-hidden h-screen">
+<div id="soundpad-app" class="h-screen flex flex-col"></div>
+<div id="root" style="display:none"></div>
+
+<script>
+// ============ UTILIDADES ============
+const HOTKEYS = "12345678QWERTYUIASDFGHJKZXCVBNM".split("");
+const VIBRANT_COLORS = ['#f43f5e','#ec4899','#d946ef','#8b5cf6','#6366f1','#3b82f6','#0ea5e9','#06b6d4','#14b8a6','#10b981','#84cc16','#eab308','#f59e0b','#f97316','#ef4444'];
+
+let _idC = 0;
+function genId() { return Date.now().toString(36) + '_' + (++_idC) + '_' + Math.random().toString(36).substr(2,5); }
+
+function hexToRgba(hex, op) {
+  hex = hex.replace('#','');
+  if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
+  return `rgba(${parseInt(hex.substring(0,2),16)},${parseInt(hex.substring(2,4),16)},${parseInt(hex.substring(4,6),16)},${op})`;
+}
+
+function formatTime(s) {
+  if (isNaN(s) || s <= 0) return "0:00";
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${sec<10?'0':''}${sec}`;
+}
+
+function createEmptyPad() {
+  return { id: genId(), fileName:'', duration:0, buffer:null, volume:1, loop:false, color:'', fadeTime:0, speed:1, hotcues:[], activeSources:[], isPlaying:false, currentTime:0, waveform:[], currentSourceId:null };
+}
+
+// ============ AUDIO ENGINE ============
+let audioCtx = null, masterGain = null, analyserNode = null;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    analyserNode = audioCtx.createAnalyser();
+    analyserNode.fftSize = 256;
+    masterGain.connect(analyserNode);
+    analyserNode.connect(audioCtx.destination);
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function stopSources(sources, fadeTime) {
+  if (!audioCtx) return;
+  sources.forEach(s => {
+    try {
+      s.source.onended = null;
+      if (fadeTime > 0) {
+        s.gainNode.gain.setValueAtTime(s.gainNode.gain.value, audioCtx.currentTime);
+        s.gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + fadeTime);
+        s.source.stop(audioCtx.currentTime + fadeTime + 0.05);
+      } else {
+        s.source.stop();
+      }
+    } catch(e) {}
+  });
+}
+
+function playSource(pad, offset) {
+  if (!pad.buffer) return null;
+  initAudio();
+  const source = audioCtx.createBufferSource();
+  const gainNode = audioCtx.createGain();
+  source.buffer = pad.buffer;
+  source.loop = pad.loop;
+  const playbackRate = pad.speed * state.globalPitch;
+  source.playbackRate.value = playbackRate;
+  gainNode.gain.value = pad.volume;
+  if (pad.fadeTime > 0) {
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(pad.volume, audioCtx.currentTime + pad.fadeTime);
+  }
+  source.connect(gainNode);
+  gainNode.connect(masterGain);
+  source.start(0, offset);
+  const sourceId = 'src_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
+  return { sourceId, source, gainNode, startTime: audioCtx.currentTime, duration: pad.buffer.duration / playbackRate, offset };
+}
+
+function getCurrentTime(sources, speed, loop, duration) {
+  if (!audioCtx || sources.length === 0) return 0;
+  const last = sources[sources.length - 1];
+  const playbackRate = speed * state.globalPitch;
+  let elapsed = (audioCtx.currentTime - last.startTime) * playbackRate + last.offset;
+  if (loop && duration > 0) elapsed = elapsed % duration;
+  return Math.min(elapsed, duration);
+}
+
+async function decodeFile(file) {
+  initAudio();
+  const ab = await file.arrayBuffer();
+  const buffer = await audioCtx.decodeAudioData(ab);
+  const ch = buffer.getChannelData(0);
+  const samples = 100, blockSize = Math.floor(ch.length / samples);
+  const waveform = [];
+  for (let i = 0; i < samples; i++) {
+    let sum = 0;
+    for (let j = 0; j < blockSize; j++) sum += Math.abs(ch[i*blockSize+j]);
+    waveform.push(sum / blockSize);
+  }
+  const max = Math.max(...waveform);
+  if (max > 0) for (let i = 0; i < waveform.length; i++) waveform[i] /= max;
+  return { buffer, waveform };
+}
+
+// ============ STATE ============
+let state = {
+  masterVolume: 1,
+  globalPitch: 1,
+  grid: { cols: 6, rows: 4 },
+  tabs: [{ id: genId(), name: 'Bank 1', pads: [] }],
+  activeTabId: null,
+  recentColors: ['#f43f5e','#3b82f6','#10b981','#f59e0b'],
+  isRecording: false,
+  recordedSequence: [],
+  recordStartTime: 0
+};
+state.activeTabId = state.tabs[0].id;
+
+function getActiveTab() { return state.tabs.find(t => t.id === state.activeTabId); }
+function getPad(padId) { return getActiveTab()?.pads.find(p => p.id === padId); }
+
+// ============ CORE AUDIO CONTROL ============
+function stopEverything() {
+  state.tabs.forEach(tab => {
+    tab.pads.forEach(pad => {
+      if (pad.activeSources.length > 0) stopSources(pad.activeSources, 0);
+      pad.activeSources = [];
+      pad.isPlaying = false;
+      pad.currentTime = 0;
+      pad.currentSourceId = null;
+    });
+  });
+  render();
+}
+
+function playPadExclusive(padId, offset = 0) {
+  const tab = getActiveTab();
+  if (!tab) return;
+  const pad = tab.pads.find(p => p.id === padId);
+  if (!pad || !pad.buffer) return;
+
+  // Stop ALL existing audio across ALL tabs
+  state.tabs.forEach(t => {
+    t.pads.forEach(p => {
+      if (p.activeSources.length > 0) stopSources(p.activeSources, 0);
+      p.activeSources = [];
+      p.isPlaying = false;
+      p.currentTime = 0;
+      p.currentSourceId = null;
+    });
+  });
+
+  const src = playSource(pad, offset);
+  if (!src) return;
+
+  pad.activeSources = [src];
+  pad.isPlaying = true;
+  pad.currentTime = offset;
+  pad.currentSourceId = src.sourceId;
+
+  src.source.onended = () => {
+    if (pad.currentSourceId === src.sourceId) {
+      pad.activeSources = [];
+      pad.isPlaying = false;
+      pad.currentSourceId = null;
+      render();
+    }
+  };
+
+  if (state.isRecording) {
+    state.recordedSequence.push({ padId, time: Date.now() - state.recordStartTime, action: 'play' });
+  }
+  render();
+}
+
+function stopSinglePad(padId) {
+  const pad = getPad(padId);
+  if (!pad || pad.activeSources.length === 0) return;
+  stopSources(pad.activeSources, pad.fadeTime);
+  pad.activeSources = [];
+  pad.isPlaying = false;
+  pad.currentSourceId = null;
+  render();
+}
+
+function clearAllPads() {
+  console.log('clearAllPads called');
+  const tab = getActiveTab();
+  if (!tab) {
+    console.error('No active tab found');
+    alert('Error: No se encontró el tab activo');
+    return;
+  }
+  
+  console.log('Active tab:', tab.name, 'Pads:', tab.pads.length);
+  
+  if (!confirm('¿Limpiar todos los soundpads del tab actual?\n\nEsta acción eliminará todos los archivos de audio del tab "' + tab.name + '".\n\nEsta acción no se puede deshacer.')) {
+    console.log('User cancelled clear operation');
+    return;
+  }
+  
+  // Stop all audio first
+  let clearedCount = 0;
+  tab.pads.forEach(pad => {
+    if (pad.activeSources && pad.activeSources.length > 0) {
+      stopSources(pad.activeSources, 0);
+      pad.activeSources = [];
+    }
+    pad.isPlaying = false;
+    pad.currentSourceId = null;
+    pad.buffer = null;
+    pad.fileName = '';
+    pad.duration = 0;
+    pad.waveform = [];
+    pad.currentTime = 0;
+    clearedCount++;
+  });
+  
+  console.log('Cleared', clearedCount, 'pads in tab:', tab.name);
+  render();
+  alert('Se limpiaron ' + clearedCount + ' soundpads del tab "' + tab.name + '"');
+}
+
+function setGlobalPitch(val) {
+  const pitch = parseFloat(val);
+  if (isNaN(pitch) || pitch < 0.1 || pitch > 4) return;
+  state.globalPitch = pitch;
+  // Update all currently playing sources
+  state.tabs.forEach(tab => {
+    tab.pads.forEach(pad => {
+      pad.activeSources.forEach(src => {
+        src.source.playbackRate.value = pad.speed * state.globalPitch;
+      });
+    });
+  });
+  render();
+}
+
+function setPadCount(val) {
+  const total = parseInt(val);
+  if (total < 1 || total > 144) return;
+  
+  // Calculate best grid dimensions
+  const cols = Math.ceil(Math.sqrt(total));
+  const rows = Math.ceil(total / cols);
+  
+  state.grid.cols = cols;
+  state.grid.rows = rows;
+  render();
+}
+
+// ============ PERSISTENCE ============
+function saveState() {
+  const data = {
+    grid: state.grid,
+    globalPitch: state.globalPitch,
+    tabs: state.tabs.map(t => ({ id: t.id, name: t.name, pads: t.pads.map(p => ({
+      id: p.id, fileName: p.fileName, duration: p.duration, volume: p.volume, loop: p.loop,
+      color: p.color, fadeTime: p.fadeTime, speed: p.speed, hotcues: p.hotcues, waveform: p.waveform
+    }))})),
+    activeTabId: state.activeTabId,
+    recentColors: state.recentColors
+  };
+  try { localStorage.setItem('soundpad_pro', JSON.stringify(data)); } catch(e) {}
+}
+
+function loadState() {
+  try {
+    const saved = localStorage.getItem('soundpad_pro');
+    if (!saved) return;
+    const data = JSON.parse(saved);
+    if (data.grid) state.grid = data.grid;
+    if (data.globalPitch !== undefined) state.globalPitch = data.globalPitch;
+    if (data.tabs) {
+      state.tabs = data.tabs.map(t => ({
+        ...t,
+        pads: t.pads.map(p => ({ ...createEmptyPad(), ...p, buffer: null, activeSources: [], isPlaying: false, currentTime: 0, currentSourceId: null }))
+      }));
+    }
+    if (data.activeTabId) state.activeTabId = data.activeTabId;
+    if (data.recentColors) state.recentColors = data.recentColors;
+  } catch(e) {}
+}
+
+// ============ RENDER ============
+function ensurePads() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  const total = state.grid.cols * state.grid.rows;
+  while (tab.pads.length < total) tab.pads.push(createEmptyPad());
+  if (tab.pads.length > total) tab.pads = tab.pads.slice(0, total);
+}
+
+function renderWaveform(waveform, progress, color) {
+  if (!waveform || waveform.length === 0) return '';
+  const barColor = color || '#0ea5e9';
+  let html = '<div class="flex items-end gap-[1px] h-8 w-full px-1">';
+  waveform.forEach((val, i) => {
+    const isActive = (i / waveform.length) <= progress;
+    const bg = isActive ? barColor : 'rgba(255,255,255,0.15)';
+    const h = Math.max(15, val * 100);
+    html += `<div style="flex:1;height:${h}%;background:${bg};min-width:1px;border-radius:1px 1px 0 0"></div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function render() {
+  ensurePads();
+  const tab = getActiveTab();
+  if (!tab) return;
+  const app = document.getElementById('soundpad-app');
+
+  let html = '';
+
+  // HEADER
+  html += `<header class="bg-zinc-900/95 border-b border-zinc-800 px-4 py-2.5 flex items-center gap-3 flex-wrap shrink-0">`;
+  html += `<h1 class="text-lg font-black tracking-tight mr-2" style="background:linear-gradient(to right,#38bdf8,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">🎛️ SoundPad Pro</h1>`;
+
+  // Tabs
+  html += `<div class="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0">`;
+  state.tabs.forEach(t => {
+    const active = t.id === state.activeTabId;
+    html += `<div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-sm font-medium border whitespace-nowrap ${active ? 'bg-sky-500/15 text-sky-300 border-sky-500/50' : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-zinc-200'}" onclick="switchTab('${t.id}')" ondblclick="renameTab('${t.id}')">
+      <span>${t.name}</span>
+      ${state.tabs.length > 1 ? `<span class="text-xs opacity-50 hover:opacity-100 hover:text-red-400" onclick="event.stopPropagation();deleteTab('${t.id}')">✕</span>` : ''}
+    </div>`;
+  });
+  html += `<button onclick="addTab()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 text-sm">+</button>`;
+  html += `</div>`;
+
+  // Visualizer
+  html += `<canvas id="visualizer" width="200" height="40" class="h-10 w-48 rounded-lg bg-black/40 border border-zinc-700/50 hidden md:block"></canvas>`;
+
+  // Actions
+  html += `<div class="flex items-center gap-2">`;
+  html += `<button onclick="exportConfig()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Exportar">💾</button>`;
+  html += `<label class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm cursor-pointer" title="Importar">📂<input type="file" accept=".json" class="hidden" onchange="importConfig(event)"></label>`;
+  html += `<button onclick="clearAllPads()" class="px-2.5 py-1.5 rounded-lg border border-orange-500/50 text-orange-400 hover:bg-orange-500/20 text-sm" title="Limpiar todos los pads del tab actual">🧹</button>`;
+  html += `<button onclick="toggleRecording()" class="px-2.5 py-1.5 rounded-lg border text-sm ${state.isRecording ? 'bg-red-500/20 border-red-500 text-red-400' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-700'}" title="Grabar (Ctrl+R)">${state.isRecording ? '⏺' : '🔴'}</button>`;
+  if (state.recordedSequence.length > 0 && !state.isRecording) {
+    html += `<button onclick="playSequence()" class="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-700 text-sm" title="Reproducir secuencia">▶️</button>`;
+  }
+  html += `<button onclick="stopEverything()" class="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 font-bold text-sm active:scale-95" title="Detener TODO (Espacio)">⏹ STOP ALL</button>`;
+  html += `</div></header>`;
+
+  // CONTROLS BAR
+  html += `<div class="bg-zinc-900/70 border-b border-zinc-800 px-4 py-2 flex items-center gap-4 flex-wrap shrink-0">`;
+  
+  // Pad count slider
+  const currentPadCount = state.grid.cols * state.grid.rows;
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Pads:</label><input type="range" min="1" max="64" value="${currentPadCount}" oninput="setPadCount(this.value)" class="w-32"><span class="text-xs text-zinc-300 font-mono w-8">${currentPadCount}</span></div>`;
+  
+  // Cols/Rows inputs (optional advanced control)
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Cols:</label><input type="number" min="1" max="12" value="${state.grid.cols}" onchange="setCols(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
+  html += `<div class="flex items-center gap-2"><label class="text-xs text-zinc-400 font-medium">Filas:</label><input type="number" min="1" max="12" value="${state.grid.rows}" onchange="setRows(this.value)" class="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"></div>`;
+  
+  html += `<div class="flex-1"></div>`;
+  
+  // Global Pitch control
+  html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🎵 Pitch:</span><input type="range" min="0.1" max="4" step="0.01" value="${state.globalPitch}" oninput="setGlobalPitch(this.value);document.getElementById('pitch-input').value=this.value" class="w-24"><input type="number" id="pitch-input" min="0.1" max="4" step="0.01" value="${state.globalPitch}" onchange="setGlobalPitch(this.value);document.querySelector('input[type=range][oninput*=setGlobalPitch]').value=this.value" class="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:border-sky-500 focus:outline-none"><span class="text-xs text-zinc-300 font-mono">x</span></div>`;
+  
+  html += `<div class="flex items-center gap-2"><span class="text-xs text-zinc-400">🔊 Master:</span><input type="range" min="0" max="1" step="0.01" value="${state.masterVolume}" oninput="setMasterVol(this.value)" class="w-24"><span class="text-xs text-zinc-300 font-mono w-8">${Math.round(state.masterVolume*100)}%</span></div>`;
+  if (state.isRecording) {
+    html += `<div class="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30"><div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span class="text-xs text-red-400 font-medium">REC ${state.recordedSequence.length}</span></div>`;
+  }
+  html += `<div class="text-[10px] text-zinc-600 hidden md:block">Espacio = Stop All | Ctrl+R = Grabar</div>`;
+  html += `</div>`;
+
+  // GRID
+  html += `<div class="flex-1 overflow-auto p-4" style="display:grid;grid-template-columns:repeat(${state.grid.cols},minmax(0,1fr));gap:12px;align-content:start;">`;
+
+  tab.pads.forEach((pad, index) => {
+    const hotkey = HOTKEYS[index] || '';
+    const progress = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
+    const hasColor = !!pad.color;
+    const padColor = pad.color || '#0ea5e9';
+
+    let style = '';
+    if (hasColor) {
+      const bgOp = pad.isPlaying ? 0.4 : 0.12;
+      style = `border-color:${padColor};background:${hexToRgba(padColor, bgOp)};`;
+      if (pad.isPlaying) style += `box-shadow:0 0 25px ${hexToRgba(padColor,0.5)},inset 0 0 15px ${hexToRgba(padColor,0.2)};`;
+      else style += `box-shadow:0 0 8px ${hexToRgba(padColor,0.2)};`;
+    }
+
+    let classes = 'pad relative rounded-xl p-3 flex flex-col cursor-pointer select-none group ';
+    classes += hasColor ? 'border-2 ' : 'border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700/80 hover:border-zinc-500 ';
+    if (pad.isPlaying) classes += 'ring-2 ring-green-400/60 ';
+    if (pad.loop && pad.isPlaying) classes += 'ring-yellow-400/60 ';
+
+    html += `<div class="${classes}" style="${style}" onclick="clickPad('${pad.id}', event)" data-pad-id="${pad.id}">`;
+
+    // Clear button
+    if (pad.buffer) {
+      html += `<button class="pad-no-trigger absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/60 border border-zinc-600 text-zinc-400 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white hover:border-red-500 z-10" onclick="event.stopPropagation();clearPad('${pad.id}')">✕</button>`;
+    }
+
+    // Header (color)
+    html += `<div class="pad-no-trigger flex items-center justify-between gap-2 mb-1 flex-shrink-0" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">`;
+    html += `<div class="flex items-center gap-1.5">`;
+    html += `<input type="color" value="${pad.color || '#000000'}" onchange="setColor('${pad.id}',this.value)" class="w-5 h-5 rounded-full border border-zinc-600 bg-transparent" title="Color">`;
+    state.recentColors.slice(0,3).forEach(c => {
+      html += `<div class="w-3.5 h-3.5 rounded-full border border-zinc-600 cursor-pointer hover:scale-125 transition-transform" style="background:${c}" onclick="event.stopPropagation();setColor('${pad.id}','${c}')"></div>`;
+    });
+    if (hasColor) html += `<button class="text-[10px] text-zinc-400 hover:text-red-400 px-1 rounded bg-black/30 border border-zinc-700" onclick="event.stopPropagation();setColor('${pad.id}','')">↺</button>`;
+    html += `</div>`;
+    html += `<span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${hasColor ? 'bg-black/40 text-white' : 'bg-zinc-900 text-zinc-400'} border border-zinc-700">${pad.buffer ? formatTime(pad.duration) : '0:00'}</span>`;
+    html += `</div>`;
+
+    // Name + Hotkey
+    html += `<div class="pad-no-trigger flex items-center gap-2 mb-1.5 bg-black/30 rounded-md px-2 py-1 border border-zinc-700/50 flex-shrink-0" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">`;
+    html += `<span class="text-xs font-bold truncate flex-1 ${hasColor && pad.isPlaying ? 'text-white' : 'text-zinc-200'}" style="${hasColor && pad.isPlaying ? 'text-shadow:0 1px 2px rgba(0,0,0,0.8)' : ''}">${pad.fileName || '--- Vacío ---'}</span>`;
+    if (hotkey) html += `<span class="text-[10px] font-mono px-1.5 py-0.5 rounded border ${hasColor ? 'bg-black/50 text-white border-white/30' : 'bg-zinc-900 text-zinc-500 border-zinc-700'}">${hotkey}</span>`;
+    html += `</div>`;
+
+    // Waveform / Dropzone - Fixed height
+    html += `<div class="flex-shrink-0 mb-1.5">`;
+    if (pad.buffer) {
+      html += `<div class="h-8">` + renderWaveform(pad.waveform, progress, pad.color) + `</div>`;
+    } else {
+      html += `<div class="h-8 flex items-center justify-center border-2 border-dashed rounded-lg text-xs font-semibold border-zinc-600 text-zinc-500">🎵 Arrastra audio</div>`;
+    }
+    html += `</div>`;
+
+    // Hotcues - Separate area with scroll if needed
+    if (pad.buffer && pad.hotcues.length > 0) {
+      html += `<div class="pad-no-trigger flex-shrink-0 mb-1.5 max-h-12 overflow-y-auto" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">`;
+      html += `<div class="flex gap-1 flex-wrap">`;
+      pad.hotcues.forEach((cue, ci) => {
+        html += `<button class="pad-no-trigger text-[9px] px-1.5 py-0.5 rounded font-bold border cursor-pointer hover:scale-105 transition-transform flex-shrink-0" style="background:${hexToRgba(cue.color,0.3)};border-color:${cue.color};color:${cue.color}" onclick="event.stopPropagation();event.preventDefault();clickHotcue('${pad.id}',${ci})" onmousedown="event.stopPropagation()">${cue.label} ${formatTime(cue.time)}</button>`;
+      });
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    // Progress bar - ALWAYS VISIBLE, fixed position
+    if (pad.buffer) {
+      const fillColor = hasColor ? hexToRgba(padColor, 0.6) : '#0ea5e9';
+      html += `<div id="progress-${pad.id}" class="pad-no-trigger relative h-4 bg-black/50 rounded overflow-hidden cursor-pointer mb-1.5 border border-zinc-700/50 flex-shrink-0" onclick="event.stopPropagation();seekPad('${pad.id}',event)" onmousedown="event.stopPropagation()">`;
+      html += `<div class="absolute inset-y-0 left-0 transition-all duration-75" style="width:${progress*100}%;background:${fillColor}"></div>`;
+      html += `<span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.9)">-${formatTime(pad.duration - pad.currentTime)}</span>`;
+      html += `</div>`;
+    } else {
+      html += `<div id="progress-${pad.id}" class="relative h-4 bg-zinc-900/50 rounded overflow-hidden mb-1.5 border border-zinc-800 flex-shrink-0"><span class="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-bold text-zinc-600">0:00</span></div>`;
+    }
+
+    // Controls
+    html += `<div class="pad-no-trigger flex-shrink-0" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">`;
+    html += `<div class="flex items-center justify-between gap-1">`;
+
+    // Loop
+    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-sm border transition-all ${pad.loop ? 'bg-yellow-500 border-yellow-400 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700'}" onclick="toggleLoop('${pad.id}')" title="Loop">🔁</button>`;
+
+    // Add hotcue
+    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-zinc-600 text-zinc-300 hover:bg-zinc-700" onclick="addHotcue('${pad.id}')" title="Añadir Hotcue">📍</button>`;
+
+    // Clear hotcues
+    if (pad.hotcues.length > 0) {
+      html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs bg-zinc-900 border border-red-500/40 text-red-400 hover:bg-red-500/20 hover:border-red-500 transition-all" onclick="clearHotcues('${pad.id}')" title="Limpiar ${pad.hotcues.length} hotcue(s)">🗑</button>`;
+    }
+
+    // Settings toggle
+    html += `<button class="w-7 h-7 rounded-md flex items-center justify-center text-xs border transition-all bg-zinc-900 border-zinc-600 text-zinc-300 hover:bg-zinc-700" onclick="togglePadSettings('${pad.id}')" title="Opciones">⚙</button>`;
+
+    // Volume
+    html += `<div class="flex items-center gap-1 ml-auto"><span class="text-[10px] text-zinc-400">🔊</span><input type="range" min="0" max="1.5" step="0.01" value="${pad.volume}" oninput="setPadVol('${pad.id}',this.value)" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" class="w-14"></div>`;
+    html += `</div>`;
+
+    // Extended settings
+    html += `<div id="pad-settings-${pad.id}" class="hidden mt-2 space-y-1.5 pt-2 border-t border-zinc-700/50 animate-in flex-shrink-0">`;
+    if (pad.buffer) {
+      html += `<div class="flex items-center gap-2"><span class="text-[10px] text-zinc-400 w-12">Speed:</span><input type="range" min="0.25" max="2" step="0.05" value="${pad.speed}" oninput="setPadSpeed('${pad.id}',this.value)" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" class="flex-1"><span class="text-[10px] text-zinc-300 w-8 text-right">${pad.speed.toFixed(2)}x</span></div>`;
+      html += `<div class="flex items-center gap-2"><span class="text-[10px] text-zinc-400 w-12">Fade:</span><input type="range" min="0" max="3" step="0.1" value="${pad.fadeTime}" oninput="setPadFade('${pad.id}',this.value)" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" class="flex-1"><span class="text-[10px] text-zinc-300 w-8 text-right">${pad.fadeTime.toFixed(1)}s</span></div>`;
+    }
+    html += `</div>`;
+
+    html += `</div>`; // end controls
+    html += `</div>`; // end pad
+  });
+
+  html += `</div>`; // end grid
+  app.innerHTML = html;
+
+  // Setup drag & drop
+  tab.pads.forEach(pad => {
+    const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
+    if (!el) return;
+    el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); el.style.borderColor = '#38bdf8'; el.style.backgroundColor = 'rgba(56,189,248,0.1)'; });
+    el.addEventListener('dragleave', () => { el.style.borderColor = ''; el.style.backgroundColor = ''; });
+    el.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); el.style.borderColor = ''; el.style.backgroundColor = ''; handleDrop(e, pad.id); });
+  });
+
+  saveState();
+}
+
+// ============ EVENT HANDLERS ============
+function clickPad(padId, e) {
+  if (e.target.closest('.pad-no-trigger')) return;
+  const pad = getPad(padId);
+  if (!pad || !pad.buffer) return;
+  if (pad.isPlaying) stopSinglePad(padId);
+  else playPadExclusive(padId);
+}
+
+function clickHotcue(padId, cueIndex) {
+  const pad = getPad(padId);
+  if (!pad || !pad.hotcues[cueIndex]) return;
+  playPadExclusive(padId, pad.hotcues[cueIndex].time);
+}
+
+async function handleDrop(e, padId) {
+  const file = e.dataTransfer.files[0];
+  if (!file || !file.type.startsWith('audio/')) return;
+  const pad = getPad(padId);
+  if (!pad) return;
+  const { buffer, waveform } = await decodeFile(file);
+  pad.buffer = buffer;
+  pad.fileName = file.name;
+  pad.duration = buffer.duration;
+  pad.waveform = waveform;
+  if (!pad.color) pad.color = VIBRANT_COLORS[Math.floor(Math.random() * VIBRANT_COLORS.length)];
+  render();
+}
+
+function seekPad(padId, e) {
+  const pad = getPad(padId);
+  if (!pad || !pad.buffer) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  playPadExclusive(padId, percent * pad.duration);
+}
+
+function clearPad(padId) {
+  stopSinglePad(padId);
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.buffer = null; pad.fileName = ''; pad.duration = 0; pad.waveform = []; pad.color = ''; pad.hotcues = [];
+  render();
+}
+
+function setColor(padId, color) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.color = color;
+  if (color && !state.recentColors.includes(color)) {
+    state.recentColors.unshift(color);
+    if (state.recentColors.length > 4) state.recentColors.pop();
+  }
+  render();
+}
+
+function toggleLoop(padId) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.loop = !pad.loop;
+  pad.activeSources.forEach(s => { s.source.loop = pad.loop; });
+  render();
+}
+
+function setPadVol(padId, val) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.volume = parseFloat(val);
+  pad.activeSources.forEach(s => { s.gainNode.gain.value = pad.volume; });
+}
+
+function setPadSpeed(padId, val) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.speed = parseFloat(val);
+  pad.activeSources.forEach(s => { s.source.playbackRate.value = pad.speed; });
+  render();
+}
+
+function setPadFade(padId, val) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.fadeTime = parseFloat(val);
+  render();
+}
+
+function addHotcue(padId) {
+  const pad = getPad(padId);
+  if (!pad || !pad.buffer) return;
+  const time = pad.currentTime || 0;
+  const color = VIBRANT_COLORS[pad.hotcues.length % VIBRANT_COLORS.length];
+  pad.hotcues.push({ time, color, label: `${pad.hotcues.length + 1}` });
+  render();
+}
+
+function clearHotcues(padId) {
+  const pad = getPad(padId);
+  if (!pad) return;
+  pad.hotcues = [];
+  render();
+}
+
+function togglePadSettings(padId) {
+  const el = document.getElementById(`pad-settings-${padId}`);
+  if (el) el.classList.toggle('hidden');
+}
+
+function setMasterVol(val) {
+  state.masterVolume = parseFloat(val);
+  if (masterGain) masterGain.gain.value = state.masterVolume;
+  render();
+}
+
+function setCols(val) { state.grid.cols = Math.max(1, Math.min(12, parseInt(val) || 6)); render(); }
+function setRows(val) { state.grid.rows = Math.max(1, Math.min(12, parseInt(val) || 4)); render(); }
+
+function switchTab(id) { stopEverything(); state.activeTabId = id; render(); }
+function addTab() { stopEverything(); const t = { id: genId(), name: `Bank ${state.tabs.length+1}`, pads: [] }; state.tabs.push(t); state.activeTabId = t.id; render(); }
+function deleteTab(id) { if (state.tabs.length <= 1) return; stopEverything(); state.tabs = state.tabs.filter(t => t.id !== id); if (state.activeTabId === id) state.activeTabId = state.tabs[0].id; render(); }
+function renameTab(id) { const t = state.tabs.find(t=>t.id===id); if (!t) return; const n = prompt('Nombre:', t.name); if (n) { t.name = n; render(); } }
+
+function toggleRecording() {
+  if (state.isRecording) { state.isRecording = false; }
+  else { state.recordedSequence = []; state.recordStartTime = Date.now(); state.isRecording = true; }
+  render();
+}
+
+function playSequence() {
+  if (state.recordedSequence.length === 0) return;
+  state.recordedSequence.forEach(ev => {
+    setTimeout(() => { if (ev.action === 'play') playPadExclusive(ev.padId); }, ev.time);
+  });
+}
+
+function exportConfig() {
+  const data = { grid: state.grid, tabs: state.tabs.map(t => ({ id:t.id, name:t.name, pads: t.pads.map(p => ({ id:p.id, fileName:p.fileName, duration:p.duration, volume:p.volume, loop:p.loop, color:p.color, fadeTime:p.fadeTime, speed:p.speed, hotcues:p.hotcues, waveform:p.waveform })) })), recentColors: state.recentColors };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)], {type:'application/json'}));
+  a.download = 'soundpad_pro_config.json';
+  a.click();
+}
+
+function importConfig(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  stopEverything();
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (data.grid) state.grid = data.grid;
+      if (data.tabs) state.tabs = data.tabs.map(t => ({ ...t, pads: t.pads.map(p => ({ ...createEmptyPad(), ...p, buffer:null, activeSources:[], isPlaying:false, currentTime:0, currentSourceId:null })) }));
+      if (data.recentColors) state.recentColors = data.recentColors;
+      if (state.tabs[0]) state.activeTabId = state.tabs[0].id;
+      render();
+    } catch(err) { alert('Error al importar'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+// ============ KEYBOARD ============
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.repeat) return;
+  const key = e.key.toUpperCase();
+  if (e.code === 'Space') { e.preventDefault(); stopEverything(); return; }
+  if (key === 'R' && e.ctrlKey) { e.preventDefault(); toggleRecording(); return; }
+  const idx = HOTKEYS.indexOf(key);
+  if (idx !== -1) {
+    const tab = getActiveTab();
+    if (tab && tab.pads[idx] && tab.pads[idx].buffer) {
+      const pad = tab.pads[idx];
+      if (pad.isPlaying) stopSinglePad(pad.id);
+      else playPadExclusive(pad.id);
+    }
+  }
+});
+
+// ============ PROGRESS LOOP (lightweight update) ============
+function progressLoop() {
+  state.tabs.forEach(tab => {
+    tab.pads.forEach(pad => {
+      if (pad.activeSources.length > 0 && pad.buffer) {
+        pad.currentTime = getCurrentTime(pad.activeSources, pad.speed, pad.loop, pad.duration);
+      }
+    });
+  });
+  // Update only progress bars (no full re-render)
+  const tab = getActiveTab();
+  if (tab) {
+    tab.pads.forEach(pad => {
+      if (!pad.buffer) return;
+      const progressBar = document.getElementById(`progress-${pad.id}`);
+      if (!progressBar) return;
+      const fill = progressBar.querySelector('.absolute.inset-y-0');
+      const txt = progressBar.querySelector('span');
+      if (fill) {
+        const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
+        fill.style.width = `${p*100}%`;
+      }
+      if (txt) txt.textContent = `-${formatTime(pad.duration - pad.currentTime)}`;
+      
+      // Update waveform progress
+      const el = document.querySelector(`[data-pad-id="${pad.id}"]`);
+      if (el && pad.waveform.length > 0) {
+        const wfContainer = el.querySelector('.h-8 .flex.items-end');
+        if (wfContainer) {
+          const bars2 = wfContainer.children;
+          const p = pad.duration > 0 ? pad.currentTime / pad.duration : 0;
+          const barColor = pad.color || '#0ea5e9';
+          for (let i = 0; i < bars2.length; i++) {
+            const isActive = (i / pad.waveform.length) <= p;
+            bars2[i].style.backgroundColor = isActive ? barColor : 'rgba(255,255,255,0.15)';
+          }
+        }
+      }
+    });
+  }
+  requestAnimationFrame(progressLoop);
+}
+
+// ============ VISUALIZER ============
+function drawVisualizer() {
+  const canvas = document.getElementById('visualizer');
+  if (!canvas || !analyserNode) { requestAnimationFrame(drawVisualizer); return; }
+  const ctx = canvas.getContext('2d');
+  const data = new Uint8Array(analyserNode.frequencyBinCount);
+  analyserNode.getByteFrequencyData(data);
+  ctx.clearRect(0, 0, 200, 40);
+  const barW = 200 / data.length;
+  for (let i = 0; i < data.length; i++) {
+    const h = (data[i] / 255) * 40;
+    const hue = (i / data.length) * 180 + 180;
+    ctx.fillStyle = `hsla(${hue},80%,60%,0.8)`;
+    ctx.fillRect(i * barW, 40 - h, barW - 1, h);
+  }
+  requestAnimationFrame(drawVisualizer);
+}
+
+// ============ INIT ============
+loadState();
+render();
+progressLoop();
+drawVisualizer();
+document.addEventListener('click', initAudio, { once: true });
+document.addEventListener('touchstart', initAudio, { once: true });
+</script>
+</body>
+</html>
